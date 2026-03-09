@@ -1,0 +1,5 @@
+# Never commit local personal settings — these contain individual user permissions
+.claude/settings.local.json
+
+# Task files are repo-specific — teams generate their own
+tasks/
