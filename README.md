@@ -97,6 +97,47 @@ Claude will populate these as you work.
 | Tier 2 | App code, new endpoints, dependencies | ~8 min | ~70k |
 | Tier 3 | Terraform, Auth0/Okta, payments, PII, IAM | ~17 min | ~250k |
 
+## CI Automation — Claude reviews every PR automatically
+
+The template includes `.github/workflows/claude-review.yml` — a GitHub Actions workflow that runs Claude agents against every PR push and posts a scored review comment.
+
+### Setup (one-time per repo)
+
+1. **Add `ANTHROPIC_API_KEY` as a secret** — set it once at the `brighte-labs` org level and all repos inherit it automatically, or add it to the individual repo under Settings → Secrets → Actions.
+
+2. **Copy the workflow into your repo:**
+```bash
+cp claude-code-template/.github/workflows/claude-review.yml your-repo/.github/workflows/
+```
+
+3. Push — the workflow fires on the next PR open or push.
+
+### How it works
+
+1. **Tier detection** — inspects changed files to assign a risk tier:
+   - Tier 3: `terraform/`, `.tf`, `iam`, `auth`, `payment` files
+   - Tier 2: application code (anything not docs/tests/assets)
+   - Tier 1: docs, tests, CSS, static assets only
+
+2. **Claude review** — installs Claude Code CLI, runs agents against the PR diff:
+   - All tiers: `code-reviewer`, `security-reviewer`
+   - Tier 2 + 3: `infra-reviewer` (IaC files only)
+   - Tier 3 only: `code-security`, `compliance-checker`
+
+3. **PR comment** — posts a scored markdown report as a PR comment. On subsequent pushes, the comment is **updated in place** (no spam).
+
+### Approximate cost per PR
+
+| Tier | Agents | Cost |
+|---|---|---|
+| Tier 1 | code-reviewer + security-reviewer | ~$0.30–0.50 |
+| Tier 2 | + infra-reviewer (if IaC) | ~$0.50–1.00 |
+| Tier 3 | + code-security + compliance-checker | ~$3–5 |
+
+> Drafts are skipped — the workflow only runs on ready PRs.
+
+---
+
 ## Team
 
 TechOps — [Brighte Labs](https://github.com/brighte-labs)
