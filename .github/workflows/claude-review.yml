@@ -133,18 +133,17 @@ jobs:
           <!-- claude-code-review -->
           " > claude-review-output.md 2>&1
 
-      - name: Find existing Claude comment
-        id: find-comment
-        uses: peter-evans/find-comment@3eae4d37986fb5a8592848f6a574febe99e0170f # v3.1.0
-        with:
-          issue-number: ${{ github.event.pull_request.number }}
-          comment-author: 'github-actions[bot]'
-          body-includes: '<!-- claude-code-review -->'
-
       - name: Post or update PR comment
-        uses: peter-evans/create-or-update-comment@71345be0265236311c031f5c7866368bd1eff043 # v4.0.0
-        with:
-          comment-id: ${{ steps.find-comment.outputs.comment-id }}
-          issue-number: ${{ github.event.pull_request.number }}
-          body-path: claude-review-output.md
-          edit-mode: replace
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BODY=$(cat claude-review-output.md)
+          EXISTING=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+            --jq '.[] | select(.body | contains("<!-- claude-code-review -->")) | .id' | head -1)
+          if [ -n "$EXISTING" ]; then
+            gh api "repos/${{ github.repository }}/issues/comments/$EXISTING" \
+              -X PATCH -f body="$BODY"
+          else
+            gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+              -X POST -f body="$BODY"
+          fi
