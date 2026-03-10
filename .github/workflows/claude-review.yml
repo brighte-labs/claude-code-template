@@ -97,12 +97,13 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           BASE_BRANCH: ${{ github.base_ref }}
         run: |
+          set -o pipefail
           claude --dangerously-skip-permissions -p "
           You are running as an automated PR reviewer in GitHub Actions CI.
 
           Context:
           - Repo: ${REPO}
-          - PR: #${PR_NUMBER} — ${PR_TITLE}
+          - PR: #${PR_NUMBER}
           - Base branch: ${BASE_BRANCH}
           - Risk Tier: ${TIER} (auto-detected from changed files)
           - Changed files: ${CHANGED_FILES}
@@ -131,7 +132,7 @@ jobs:
           [2-3 sentence summary of overall quality]
 
           <!-- claude-code-review -->
-          " > claude-review-output.md 2>&1
+          " 2>&1 | tee claude-review-output.md
 
       - name: Post or update PR comment
         env:
@@ -147,3 +148,18 @@ jobs:
             gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
               -X POST -f body="$BODY"
           fi
+
+      - name: Enforce quality gate
+        run: |
+          VERDICT=$(grep -oP '\*\*Verdict:\*\* \K[A-Z ]+' claude-review-output.md | head -1)
+          SCORE=$(grep -oP '\*\*Score:\*\* \K[0-9]+' claude-review-output.md | head -1)
+          echo "Verdict: $VERDICT | Score: $SCORE/100"
+          if [ "$VERDICT" = "FAIL" ]; then
+            echo "❌ Claude review verdict: FAIL — merge blocked."
+            exit 1
+          fi
+          if [ -n "$SCORE" ] && [ "$SCORE" -lt 70 ]; then
+            echo "❌ Score $SCORE/100 is below threshold (70) — merge blocked."
+            exit 1
+          fi
+          echo "✅ Quality gate passed (Verdict: $VERDICT, Score: $SCORE/100)"
