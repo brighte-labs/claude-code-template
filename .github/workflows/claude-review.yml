@@ -77,7 +77,15 @@ jobs:
           aws-region: ap-southeast-2
 
       - name: Install Claude Code CLI
-        run: npm install -g @anthropic-ai/claude-code
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude --version
+
+      - name: Fetch agents from claude-code-template
+        run: |
+          git clone --depth 1 https://github.com/brighte-labs/claude-code-template.git /tmp/claude-template
+          mkdir -p .claude
+          cp -r /tmp/claude-template/.claude/agents .claude/
 
       - name: Run Claude review
         env:
