@@ -151,7 +151,7 @@ jobs:
 
       - name: Enforce quality gate
         run: |
-          VERDICT=$(grep -oP '\*\*Verdict:\*\* \K[A-Z ]+' claude-review-output.md | head -1)
+          VERDICT=$(grep -oP '\*\*Verdict:\*\* \K[A-Z ]+' claude-review-output.md | head -1 | xargs)
           SCORE=$(grep -oP '\*\*Score:\*\* \K[0-9]+' claude-review-output.md | head -1)
           echo "Verdict: $VERDICT | Score: $SCORE/100"
           if [ "$VERDICT" = "FAIL" ]; then
