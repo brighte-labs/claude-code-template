@@ -138,7 +138,7 @@ jobs:
           AGENTS=$(grep '^AGENTS_JSON: ' research-output.txt | tail -1 | sed 's/^AGENTS_JSON: //')
           if [ -z "$AGENTS" ] || [ "$AGENTS" = "[]" ]; then
             echo "⚠️ Researcher returned no agents — falling back to defaults"
-            AGENTS='["code-reviewer","security-reviewer"]'
+            AGENTS='["code-duplication","code-reviewer","code-security","compliance-checker","dependency-audit","infra-reviewer","security-reviewer"]'
           fi
           echo "Selected agents: $AGENTS"
           echo "agents=$AGENTS" >> "$GITHUB_OUTPUT"
