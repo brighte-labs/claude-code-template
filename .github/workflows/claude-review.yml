@@ -94,11 +94,11 @@ jobs:
         env:
           CLAUDE_CODE_USE_BEDROCK: "1"
           AWS_REGION: ap-southeast-2
-          ANTHROPIC_MODEL: au.anthropic.claude-sonnet-4-6
-          ANTHROPIC_SMALL_FAST_MODEL: au.anthropic.claude-haiku-4-5-20251001-v1:0
-          ANTHROPIC_DEFAULT_SONNET_MODEL: au.anthropic.claude-sonnet-4-6
-          ANTHROPIC_DEFAULT_HAIKU_MODEL: au.anthropic.claude-haiku-4-5-20251001-v1:0
-          ANTHROPIC_DEFAULT_OPUS_MODEL: au.anthropic.claude-opus-4-6-v1
+          ANTHROPIC_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-sonnet
+          ANTHROPIC_SMALL_FAST_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-haiku
+          ANTHROPIC_DEFAULT_SONNET_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-sonnet
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-haiku
+          ANTHROPIC_DEFAULT_OPUS_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-opus
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TIER: ${{ needs.detect-tier.outputs.tier }}
           CHANGED_FILES: ${{ needs.detect-tier.outputs.changed_files }}
@@ -191,11 +191,11 @@ jobs:
         env:
           CLAUDE_CODE_USE_BEDROCK: "1"
           AWS_REGION: ap-southeast-2
-          ANTHROPIC_MODEL: au.anthropic.claude-sonnet-4-6
-          ANTHROPIC_SMALL_FAST_MODEL: au.anthropic.claude-haiku-4-5-20251001-v1:0
-          ANTHROPIC_DEFAULT_SONNET_MODEL: au.anthropic.claude-sonnet-4-6
-          ANTHROPIC_DEFAULT_HAIKU_MODEL: au.anthropic.claude-haiku-4-5-20251001-v1:0
-          ANTHROPIC_DEFAULT_OPUS_MODEL: au.anthropic.claude-opus-4-6-v1
+          ANTHROPIC_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-sonnet
+          ANTHROPIC_SMALL_FAST_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-haiku
+          ANTHROPIC_DEFAULT_SONNET_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-sonnet
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-haiku
+          ANTHROPIC_DEFAULT_OPUS_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-opus
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TIER: ${{ needs.detect-tier.outputs.tier }}
           CHANGED_FILES: ${{ needs.detect-tier.outputs.changed_files }}
@@ -284,11 +284,11 @@ jobs:
         env:
           CLAUDE_CODE_USE_BEDROCK: "1"
           AWS_REGION: ap-southeast-2
-          ANTHROPIC_MODEL: au.anthropic.claude-sonnet-4-6
-          ANTHROPIC_SMALL_FAST_MODEL: au.anthropic.claude-haiku-4-5-20251001-v1:0
-          ANTHROPIC_DEFAULT_SONNET_MODEL: au.anthropic.claude-sonnet-4-6
-          ANTHROPIC_DEFAULT_HAIKU_MODEL: au.anthropic.claude-haiku-4-5-20251001-v1:0
-          ANTHROPIC_DEFAULT_OPUS_MODEL: au.anthropic.claude-opus-4-6-v1
+          ANTHROPIC_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-sonnet
+          ANTHROPIC_SMALL_FAST_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-haiku
+          ANTHROPIC_DEFAULT_SONNET_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-sonnet
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-haiku
+          ANTHROPIC_DEFAULT_OPUS_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-opus
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
