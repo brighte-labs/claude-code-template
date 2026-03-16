@@ -193,6 +193,7 @@ jobs:
              Tier 2+ eligible (add to Tier 1 set as relevant):
              - compliance-checker  (APRA/SOC 2 — include if touches PII, data storage, auth, payments)
              - dependency-audit    (CVEs — include if package files changed)
+             - threat-intel-reviewer (live threat intel — include if package files changed or new dependencies added)
              - infra-reviewer      (IaC — include ONLY if IAC_FILES is non-empty)
              - static-analysis     (linting — include if substantial code changes)
              - test-coverage       (coverage — include if test files present or coverage seems low)
@@ -200,11 +201,10 @@ jobs:
 
              Tier 3 only:
              - code-security       (deep scan — include for payments, auth, Finpower, PII)
-             - threat-intel-reviewer (live threat intel — include for Tier 3 always)
 
           4. Rules:
              - Always include code-reviewer and security-reviewer
-             - Always include threat-intel-reviewer for Tier 3
+             - Always include threat-intel-reviewer for Tier 2 when package files changed, and always for Tier 3
              - Only include infra-reviewer if IaC files were actually changed
              - Minimum agents for Tier 1: [code-reviewer, security-reviewer]
              - Do NOT include all agents unless every single one is genuinely relevant
@@ -227,7 +227,7 @@ jobs:
             if [ "$TIER" = "3" ]; then
               AGENTS='["code-reviewer","security-reviewer","code-security","compliance-checker","threat-intel-reviewer"]'
             elif [ "$TIER" = "2" ]; then
-              AGENTS='["code-reviewer","security-reviewer","compliance-checker"]'
+              AGENTS='["code-reviewer","security-reviewer","dependency-audit","threat-intel-reviewer","compliance-checker"]'
             else
               AGENTS='["code-reviewer","security-reviewer"]'
             fi
