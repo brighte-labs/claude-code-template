@@ -1,24 +1,49 @@
-name: Claude Code Review
+name: Brighte Claude Code Review
 
-# Researcher first decides which agents to run, then runs them in parallel via matrix.
-# Uses AWS Bedrock (ap-southeast-2) via GitHub OIDC — no Anthropic API key required.
+# Trigger: push to feature branches → gate runs → PR created on pass
+# Agents pulled live from brighte-labs/claude-code-template on every run
+# Uses AWS Bedrock (ap-southeast-2) via GitHub OIDC — no Anthropic API key required
 # Assumes: arn:aws:iam::040925256309:role/github-bedrock
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+  push:
+    branches:
+      - 'feature/**'
+      - 'fix/**'
+      - 'BTB-**'
+      - 'BUG-**'
+      - 'copilot/**'       # catch Copilot Coding Agent branches
+    branches-ignore:
+      - main
+      - develop
+      - staging
+
+# Required for PR creation, comment posting, branch push-back
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+# Cancel in-progress runs for the same branch — only latest push matters
+concurrency:
+  group: claude-review-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  # ─────────────────────────────────────────────
+
+  # ─────────────────────────────────────────────────────────────
   # Job 1: Detect risk tier from changed files
-  # ─────────────────────────────────────────────
+  # Fast bash-only step — no model calls, no token spend
+  # ─────────────────────────────────────────────────────────────
   detect-tier:
-    name: Detect risk tier
+    name: "1 · Detect risk tier"
     runs-on: ubuntu-latest
-    if: github.event.pull_request.draft == false
     outputs:
       tier: ${{ steps.tier.outputs.tier }}
       changed_files: ${{ steps.tier.outputs.changed_files }}
+      iac_files: ${{ steps.tier.outputs.iac_files }}
+      is_docs_only: ${{ steps.tier.outputs.is_docs_only }}
+
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -27,33 +52,52 @@ jobs:
       - name: Determine tier from diff
         id: tier
         run: |
-          git fetch origin ${{ github.base_ref }}
-          CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | tr '\n' ' ')
+          BASE=${{ github.event.repository.default_branch }}
+          git fetch origin $BASE
+
+          CHANGED=$(git diff --name-only origin/$BASE...HEAD | tr '\n' ' ')
+          IAC=$(git diff --name-only origin/$BASE...HEAD \
+            | grep -E "\.tf$|\.tfvars$|\.github/workflows/|task-definition|appspec\.yml|Dockerfile" \
+            | tr '\n' ' ')
+
           echo "changed_files=$CHANGED" >> "$GITHUB_OUTPUT"
+          echo "iac_files=$IAC" >> "$GITHUB_OUTPUT"
 
-          # Tier 3 — IaC, IAM, payments, PII
-          if git diff --name-only origin/${{ github.base_ref }}...HEAD \
-            | grep -qE "^terraform/|\.tf$|iam|auth|payment|finpower|pii"; then
-            echo "tier=3" >> "$GITHUB_OUTPUT"
-            echo "Tier 3 detected (Terraform/IaC/sensitive files)"
-
-          # Tier 2 — application code
-          elif git diff --name-only origin/${{ github.base_ref }}...HEAD \
-            | grep -qvE "\.(md|txt|test\.|spec\.|css|png|jpg|svg)$|^docs/|^README"; then
-            echo "tier=2" >> "$GITHUB_OUTPUT"
-            echo "Tier 2 detected (application code)"
-
+          # Check if all changes are docs/assets only
+          NON_DOCS=$(git diff --name-only origin/$BASE...HEAD \
+            | grep -cvE "\.(md|txt|png|jpg|svg|ico|css)$|^docs/|^README|^\.github/CODEOWNERS" || true)
+          if [ "$NON_DOCS" -eq 0 ]; then
+            echo "is_docs_only=true" >> "$GITHUB_OUTPUT"
           else
-            echo "tier=1" >> "$GITHUB_OUTPUT"
-            echo "Tier 1 detected (docs/tests/assets only)"
+            echo "is_docs_only=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # ─────────────────────────────────────────────
-  # Job 2: Researcher — decide which agents to run
-  # ─────────────────────────────────────────────
+          # Tier 3 — payments, auth, IaC, PII, Finpower
+          if git diff --name-only origin/$BASE...HEAD \
+            | grep -qiE "terraform/|\.tf$|iam|auth|payment|finpower|pii|mssql|\.php$|eventbridge|secret|kms|vpc|security.group|conditional.access"; then
+            echo "tier=3" >> "$GITHUB_OUTPUT"
+            echo "🔴 Tier 3 — high risk (payments/auth/IaC/Finpower)"
+
+          # Tier 2 — application code
+          elif git diff --name-only origin/$BASE...HEAD \
+            | grep -qvE "\.(md|txt|test\.|spec\.|css|png|jpg|svg)$|^docs/|^README"; then
+            echo "tier=2" >> "$GITHUB_OUTPUT"
+            echo "🟡 Tier 2 — application code"
+
+          # Tier 1 — docs/tests/assets
+          else
+            echo "tier=1" >> "$GITHUB_OUTPUT"
+            echo "🟢 Tier 1 — docs/tests/assets"
+          fi
+
+  # ─────────────────────────────────────────────────────────────
+  # Job 2: Researcher — selects agents based on actual diff
+  # Falls back to tier-appropriate defaults, never full set
+  # ─────────────────────────────────────────────────────────────
   research:
-    name: Research — select agents
+    name: "2 · Research — select agents"
     needs: detect-tier
+    if: needs.detect-tier.outputs.is_docs_only == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -73,22 +117,41 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Configure AWS credentials (OIDC → mgmt bedrock role)
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
         with:
           role-to-assume: arn:aws:iam::040925256309:role/github-bedrock
           aws-region: ap-southeast-2
 
-      - name: Install Claude Code CLI
-        run: |
-          npm install -g @anthropic-ai/claude-code
-          claude --version
+      - name: Cache agent templates
+        id: cache-agents
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: /tmp/claude-template
+          key: claude-template-${{ hashFiles('.github/workflows/claude-review.yml') }}-${{ github.sha }}
+          restore-keys: |
+            claude-template-${{ hashFiles('.github/workflows/claude-review.yml') }}-
 
-      - name: Fetch agents from claude-code-template
+      - name: Fetch agent templates (if not cached)
+        if: steps.cache-agents.outputs.cache-hit != 'true'
         run: |
           git clone --depth 1 https://github.com/brighte-labs/claude-code-template.git /tmp/claude-template
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Overlay agents
+        run: |
           mkdir -p .claude
           cp -r /tmp/claude-template/.claude/agents .claude/
+          cp -r /tmp/claude-template/.claude/context .claude/
+
+      - name: Get diff for researcher
+        run: |
+          BASE=${{ github.event.repository.default_branch }}
+          git fetch origin $BASE
+          git diff origin/$BASE...HEAD > /tmp/pr-diff.txt
+          echo "Diff lines: $(wc -l < /tmp/pr-diff.txt)"
 
       - name: Run researcher agent
         env:
@@ -102,52 +165,84 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TIER: ${{ needs.detect-tier.outputs.tier }}
           CHANGED_FILES: ${{ needs.detect-tier.outputs.changed_files }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          IAC_FILES: ${{ needs.detect-tier.outputs.iac_files }}
           REPO: ${{ github.repository }}
-          BASE_BRANCH: ${{ github.base_ref }}
+          BRANCH: ${{ github.ref_name }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -o pipefail
           claude --dangerously-skip-permissions -p "
-          You are the researcher agent for an automated PR review system.
+          You are the researcher agent for Brighte's automated PR review pipeline.
 
           Context:
           - Repo: ${REPO}
-          - PR: #${PR_NUMBER}
+          - Branch: ${BRANCH}
           - Base branch: ${BASE_BRANCH}
           - Risk Tier: ${TIER} (auto-detected from changed files)
           - Changed files: ${CHANGED_FILES}
+          - IaC files changed: ${IAC_FILES:-none}
 
           Instructions:
-          1. Fetch the PR diff: run \`gh pr diff ${PR_NUMBER}\`
+          1. Read the diff: cat /tmp/pr-diff.txt
           2. Follow the instructions in .claude/agents/researcher.md
-          3. Based on your research, select the relevant agents from this list:
-             - code-duplication  (repeated/duplicated code patterns)
-             - code-reviewer     (general code quality, logic, best practices)
-             - code-security     (deep security vulnerabilities)
-             - compliance-checker (APRA/SOC 2 compliance implications)
-             - dependency-audit  (dependency vulnerabilities, outdated packages)
-             - infra-reviewer    (infrastructure, Terraform, IaC changes)
-             - security-reviewer (security review — auth, secrets, injection)
-          4. On the very last line of your response, output ONLY this line (no other text after it):
+          3. Select agents from this list that are relevant to the actual diff:
+
+             Tier 1 eligible:
+             - code-reviewer       (code quality — always include for code changes)
+             - security-reviewer   (security — always include)
+
+             Tier 2+ eligible (add to Tier 1 set as relevant):
+             - compliance-checker  (APRA/SOC 2 — include if touches PII, data storage, auth, payments)
+             - dependency-audit    (CVEs — include if package files changed)
+             - infra-reviewer      (IaC — include ONLY if IAC_FILES is non-empty)
+             - static-analysis     (linting — include if substantial code changes)
+             - test-coverage       (coverage — include if test files present or coverage seems low)
+             - code-duplication    (DRY — include if obvious repeated patterns in diff)
+
+             Tier 3 only:
+             - code-security       (deep scan — include for payments, auth, Finpower, PII)
+             - threat-intel-reviewer (live threat intel — include for Tier 3 always)
+
+          4. Rules:
+             - Always include code-reviewer and security-reviewer
+             - Always include threat-intel-reviewer for Tier 3
+             - Only include infra-reviewer if IaC files were actually changed
+             - Minimum agents for Tier 1: [code-reviewer, security-reviewer]
+             - Do NOT include all agents unless every single one is genuinely relevant
+
+          5. On the very last line output ONLY this exact line (no trailing text):
              AGENTS_JSON: [\"agent1\",\"agent2\"]
           " 2>&1 | tee research-output.txt
 
       - name: Parse selected agents
         id: parse
+        env:
+          TIER: ${{ needs.detect-tier.outputs.tier }}
         run: |
+          # Extract agent list from researcher output
           AGENTS=$(grep '^AGENTS_JSON: ' research-output.txt | tail -1 | sed 's/^AGENTS_JSON: //')
+
+          # Tier-aware fallback — NEVER fall back to all agents
           if [ -z "$AGENTS" ] || [ "$AGENTS" = "[]" ]; then
-            echo "⚠️ Researcher returned no agents — falling back to defaults"
-            AGENTS='["code-duplication","code-reviewer","code-security","compliance-checker","dependency-audit","infra-reviewer","security-reviewer"]'
+            echo "⚠️  Researcher returned no agents — using tier-aware fallback"
+            if [ "$TIER" = "3" ]; then
+              AGENTS='["code-reviewer","security-reviewer","code-security","compliance-checker","threat-intel-reviewer"]'
+            elif [ "$TIER" = "2" ]; then
+              AGENTS='["code-reviewer","security-reviewer","compliance-checker"]'
+            else
+              AGENTS='["code-reviewer","security-reviewer"]'
+            fi
           fi
-          echo "Selected agents: $AGENTS"
+
+          echo "✅ Selected agents: $AGENTS"
           echo "agents=$AGENTS" >> "$GITHUB_OUTPUT"
 
-  # ─────────────────────────────────────────────
-  # Job 3: Run each selected agent in parallel
-  # ─────────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────
+  # Job 3: Run each agent in parallel via matrix
+  # Each agent gets a clean runner and isolated context
+  # ─────────────────────────────────────────────────────────────
   agent-review:
-    name: Agent — ${{ matrix.agent }}
+    name: "3 · Agent — ${{ matrix.agent }}"
     needs: [detect-tier, research]
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -159,7 +254,7 @@ jobs:
     strategy:
       matrix:
         agent: ${{ fromJSON(needs.research.outputs.agents) }}
-      fail-fast: false
+      fail-fast: false   # all agents complete even if one fails
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -170,22 +265,60 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Configure AWS credentials (OIDC → mgmt bedrock role)
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
         with:
           role-to-assume: arn:aws:iam::040925256309:role/github-bedrock
           aws-region: ap-southeast-2
 
-      - name: Install Claude Code CLI
-        run: |
-          npm install -g @anthropic-ai/claude-code
-          claude --version
+      - name: Cache agent templates
+        id: cache-agents
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: /tmp/claude-template
+          key: claude-template-${{ hashFiles('.github/workflows/claude-review.yml') }}-${{ github.sha }}
+          restore-keys: |
+            claude-template-${{ hashFiles('.github/workflows/claude-review.yml') }}-
 
-      - name: Fetch agents from claude-code-template
+      - name: Fetch agent templates (if not cached)
+        if: steps.cache-agents.outputs.cache-hit != 'true'
         run: |
           git clone --depth 1 https://github.com/brighte-labs/claude-code-template.git /tmp/claude-template
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Overlay agents and CI settings
+        run: |
           mkdir -p .claude
           cp -r /tmp/claude-template/.claude/agents .claude/
+          cp -r /tmp/claude-template/.claude/context .claude/
+
+          # CI-scoped settings — restrict what agents can do in pipeline
+          # Agents only need to read diff and write findings
+          cat > .claude/settings.json << 'EOF'
+          {
+            "permissions": {
+              "deny": [
+                "Bash(git push*)",
+                "Bash(aws sts*)",
+                "Bash(aws iam*)",
+                "Bash(aws s3 cp*)",
+                "Bash(curl * | bash)",
+                "Bash(wget * | sh)",
+                "Bash(rm -rf *)",
+                "Bash(DROP TABLE*)",
+                "Bash(DELETE FROM * WHERE 1*)"
+              ]
+            }
+          }
+          EOF
+
+      - name: Get diff for agent
+        run: |
+          BASE=${{ github.event.repository.default_branch }}
+          git fetch origin $BASE
+          git diff origin/$BASE...HEAD > /tmp/pr-diff.txt
 
       - name: Run ${{ matrix.agent }} agent
         env:
@@ -199,48 +332,62 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TIER: ${{ needs.detect-tier.outputs.tier }}
           CHANGED_FILES: ${{ needs.detect-tier.outputs.changed_files }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          IAC_FILES: ${{ needs.detect-tier.outputs.iac_files }}
           REPO: ${{ github.repository }}
-          BASE_BRANCH: ${{ github.base_ref }}
+          BRANCH: ${{ github.ref_name }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
           AGENT: ${{ matrix.agent }}
         run: |
           set -o pipefail
           claude --dangerously-skip-permissions -p "
-          You are running the ${AGENT} agent for an automated PR review.
+          You are running the ${AGENT} agent for Brighte's automated code review pipeline.
 
           Context:
           - Repo: ${REPO}
-          - PR: #${PR_NUMBER}
+          - Branch: ${BRANCH}
           - Base branch: ${BASE_BRANCH}
           - Risk Tier: ${TIER}
           - Changed files: ${CHANGED_FILES}
+          - IaC files: ${IAC_FILES:-none}
 
           Instructions:
-          1. Fetch the PR diff: run \`gh pr diff ${PR_NUMBER}\`
-          2. Read the changed files listed above
-          3. Run the .claude/agents/${AGENT}.md agent — follow its instructions precisely
-          4. Output findings in markdown with severity labels (CRITICAL / HIGH / MEDIUM / LOW)
-             Each finding: severity, file:line, description, suggested fix
+          1. Read the diff: cat /tmp/pr-diff.txt
+          2. Read changed files listed above using the Read tool for full context
+          3. Follow the instructions in .claude/agents/${AGENT}.md precisely
+          4. Output findings using severity labels: CRITICAL / HIGH / MEDIUM / LOW
+             Format each finding as: [SEVERITY] file:line — description — suggested fix
+          5. End your output with these two machine-readable lines (exact format, no variation):
+             AGENT_SCORE: [0-100]
+             AGENT_VERDICT: [PASS|REVIEW|FAIL]
           " 2>&1 | tee agent-output.md
 
       - name: Upload agent findings
-        uses: actions/upload-artifact@v4
+        if: always()
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
         with:
           name: agent-${{ matrix.agent }}
           path: agent-output.md
+          retention-days: 30
 
-  # ─────────────────────────────────────────────
-  # Job 4: Consolidate findings → PR comment + gate
-  # ─────────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────
+  # Job 4: Consolidate findings → PR comment + gate decision
+  # Creates PR automatically on pass; notifies developer always
+  # ─────────────────────────────────────────────────────────────
   consolidate:
-    name: Consolidate and quality gate
-    needs: agent-review
+    name: "4 · Consolidate + gate"
+    needs: [detect-tier, research, agent-review]
+    if: always() && needs.research.result != 'skipped'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: read
+      contents: write
       pull-requests: write
       id-token: write
+
+    outputs:
+      gate_result: ${{ steps.gate.outputs.gate_result }}
+      gate_score: ${{ steps.gate.outputs.gate_score }}
+      pr_url: ${{ steps.create_pr.outputs.pr_url }}
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -251,34 +398,68 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Configure AWS credentials (OIDC → mgmt bedrock role)
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
         with:
           role-to-assume: arn:aws:iam::040925256309:role/github-bedrock
           aws-region: ap-southeast-2
 
-      - name: Install Claude Code CLI
+      - name: Cache agent templates
+        id: cache-agents
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: /tmp/claude-template
+          key: claude-template-${{ hashFiles('.github/workflows/claude-review.yml') }}-${{ github.sha }}
+          restore-keys: |
+            claude-template-${{ hashFiles('.github/workflows/claude-review.yml') }}-
+
+      - name: Fetch agent templates (if not cached)
+        if: steps.cache-agents.outputs.cache-hit != 'true'
         run: |
-          npm install -g @anthropic-ai/claude-code
-          claude --version
+          git clone --depth 1 https://github.com/brighte-labs/claude-code-template.git /tmp/claude-template
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Overlay agents
+        run: |
+          mkdir -p .claude
+          cp -r /tmp/claude-template/.claude/agents .claude/
+          cp -r /tmp/claude-template/.claude/context .claude/
+          cat > .claude/settings.json << 'EOF'
+          {
+            "permissions": {
+              "deny": [
+                "Bash(git push*)",
+                "Bash(aws sts*)",
+                "Bash(aws iam*)",
+                "Bash(curl * | bash)",
+                "Bash(rm -rf *)"
+              ]
+            }
+          }
+          EOF
 
       - name: Download all agent findings
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@cc203385981b70ca67364e6a54ae7fa11e1a17b6 # v4.1.9
         with:
           pattern: agent-*
           path: agent-outputs/
           merge-multiple: false
 
-      - name: Combine findings into one file
+      - name: Combine all findings
         run: |
-          echo "# Agent Findings" > combined-findings.md
+          echo "# Agent Findings — ${GITHUB_REF_NAME}" > combined-findings.md
+          echo "Branch: ${{ github.ref_name }} | Tier: ${{ needs.detect-tier.outputs.tier }}" >> combined-findings.md
+          echo "" >> combined-findings.md
           for dir in agent-outputs/agent-*/; do
             agent_name=$(basename "$dir" | sed 's/^agent-//')
             echo "" >> combined-findings.md
             echo "---" >> combined-findings.md
             echo "## Agent: $agent_name" >> combined-findings.md
-            cat "$dir/agent-output.md" >> combined-findings.md
+            cat "$dir/agent-output.md" >> combined-findings.md 2>/dev/null || echo "(no output)" >> combined-findings.md
           done
+          echo "Total lines: $(wc -l < combined-findings.md)"
 
       - name: Consolidate into final report
         env:
@@ -290,63 +471,260 @@ jobs:
           ANTHROPIC_DEFAULT_HAIKU_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:application-inference-profile/ys8eznxdwug5
           ANTHROPIC_DEFAULT_OPUS_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:application-inference-profile/8jk1lhs5f6h7
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          TIER: ${{ needs.detect-tier.outputs.tier }}
+          AGENTS_RUN: ${{ needs.research.outputs.agents }}
         run: |
           set -o pipefail
           claude --dangerously-skip-permissions -p "
-          You are consolidating findings from multiple PR review agents into a single report.
+          You are consolidating findings from multiple PR review agents into a final report.
 
-          Read the file combined-findings.md — it contains outputs from all agents that ran.
+          Read combined-findings.md — it contains outputs from all agents.
 
-          Produce a single consolidated markdown report in EXACTLY this format:
+          Produce a consolidated report in this EXACT format:
 
-          ## Claude Code Review — PR #${PR_NUMBER}
+          ## Brighte Code Review — Branch: ${BRANCH}
 
-          **Risk Tier:** [1/2/3] | **Verdict:** [PASS / CONDITIONAL PASS / FAIL] | **Score:** [X]/100
+          **Risk Tier:** ${TIER} | **Agents run:** $(echo '${AGENTS_RUN}' | tr -d '[]\"' | tr ',' ', ')
 
-          ### Agents run
-          [Bullet list of agents that contributed findings]
-
-          ### Findings
-          [CRITICAL / HIGH findings first, then MEDIUM, then LOW]
-          Each finding: severity, agent, file:line, description, suggested fix
-
-          ### Auto-remediation suggestions
-          [Specific code fixes Claude recommends]
+          **Verdict:** [PASS / CONDITIONAL PASS / FAIL]
+          **Score:** [X]/100
 
           ### Summary
-          [2-3 sentence summary of overall quality]
+          [2-3 sentences on overall quality and what this PR does]
+
+          ### Critical & High Findings
+          [List CRITICAL then HIGH findings. Each: severity, agent, file:line, description, fix]
+          [Write 'None' if no critical or high findings]
+
+          ### Medium Findings
+          [List MEDIUM findings that need developer attention before merge]
+          [Write 'None' if no medium findings]
+
+          ### Threat Intelligence
+          [Summarise any findings from threat-intel-reviewer if it ran, or omit section]
+
+          ### Auto-remediation recommended
+          [List specific code fixes with examples, or 'None required']
+
+          ### Where to focus your review
+          [2-3 specific areas for the human reviewer, with file:line references]
 
           <!-- claude-code-review -->
-          " 2>&1 | tee claude-review-output.md
 
-      - name: Post or update PR comment
+          Then on the final two lines, output ONLY these machine-readable markers:
+          GATE_RESULT: [PASS|CONDITIONAL|FAIL]
+          GATE_SCORE: [0-100]
+
+          Scoring rules:
+          - Start at 100
+          - CRITICAL finding: -25 each (unresolved CRITICAL = automatic FAIL regardless of score)
+          - HIGH finding: -15 each
+          - MEDIUM finding: -8 each
+          - LOW finding: -3 each
+          - Tier 3 with no threat-intel-reviewer run: -5
+          - PASS: score >= 85
+          - CONDITIONAL: score 70-84 (MEDIUM findings exist, engineer must acknowledge)
+          - FAIL: score < 70 OR any unresolved CRITICAL
+          " 2>&1 | tee final-report.md
+
+      - name: Extract gate decision
+        id: gate
+        run: |
+          # Machine-readable markers on last two lines — not grep on formatted text
+          RESULT=$(grep '^GATE_RESULT: ' final-report.md | tail -1 | sed 's/^GATE_RESULT: //' | xargs)
+          SCORE=$(grep '^GATE_SCORE: ' final-report.md | tail -1 | sed 's/^GATE_SCORE: //' | xargs)
+
+          # Validate we got real values
+          if [[ -z "$RESULT" || -z "$SCORE" ]]; then
+            echo "⚠️  Could not extract gate result — failing safe"
+            RESULT="FAIL"
+            SCORE="0"
+          fi
+
+          echo "gate_result=$RESULT" >> "$GITHUB_OUTPUT"
+          echo "gate_score=$SCORE" >> "$GITHUB_OUTPUT"
+          echo "Gate result: $RESULT | Score: $SCORE/100"
+
+      - name: Create PR automatically (gate passed)
+        id: create_pr
+        if: steps.gate.outputs.gate_result == 'PASS' || steps.gate.outputs.gate_result == 'CONDITIONAL'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          BODY=$(cat claude-review-output.md)
-          EXISTING=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
-            --jq '.[] | select(.body | contains("<!-- claude-code-review -->")) | .id' | head -1)
-          if [ -n "$EXISTING" ]; then
-            gh api "repos/${{ github.repository }}/issues/comments/$EXISTING" \
-              -X PATCH -f body="$BODY"
-          else
-            gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
-              -X POST -f body="$BODY"
+          # Strip machine-readable markers from PR body
+          PR_BODY=$(grep -v '^GATE_RESULT: \|^GATE_SCORE: ' final-report.md)
+
+          TITLE="${{ github.event.head_commit.message }}"
+          # Truncate to 72 chars if needed
+          TITLE="${TITLE:0:72}"
+
+          PR_URL=$(gh pr create \
+            --title "$TITLE" \
+            --body "$PR_BODY" \
+            --base ${{ github.event.repository.default_branch }} \
+            --head ${{ github.ref_name }} \
+            2>&1) || true
+
+          echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+          echo "PR: $PR_URL"
+
+      - name: Post review as PR comment (if PR already exists)
+        if: steps.create_pr.outcome == 'skipped' || failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Check if PR already exists for this branch
+          EXISTING_PR=$(gh pr list --head ${{ github.ref_name }} --json number --jq '.[0].number' 2>/dev/null || echo "")
+          if [ -n "$EXISTING_PR" ]; then
+            BODY=$(grep -v '^GATE_RESULT: \|^GATE_SCORE: ' final-report.md)
+            EXISTING_COMMENT=$(gh api "repos/${{ github.repository }}/issues/${EXISTING_PR}/comments" \
+              --jq '.[] | select(.body | contains("<!-- claude-code-review -->")) | .id' | head -1)
+            if [ -n "$EXISTING_COMMENT" ]; then
+              gh api "repos/${{ github.repository }}/issues/comments/$EXISTING_COMMENT" \
+                -X PATCH -f body="$BODY"
+            else
+              gh api "repos/${{ github.repository }}/issues/${EXISTING_PR}/comments" \
+                -X POST -f body="$BODY"
+            fi
           fi
 
-      - name: Enforce quality gate
+      - name: Store gate telemetry (S3 — ap-southeast-2)
+        if: always()
+        env:
+          AWS_REGION: ap-southeast-2
         run: |
-          VERDICT=$(grep -oP '\*\*Verdict:\*\* \K[A-Z ]+' claude-review-output.md | head -1 | xargs)
-          SCORE=$(grep -oP '\*\*Score:\*\* \K[0-9]+' claude-review-output.md | head -1)
-          echo "Verdict: $VERDICT | Score: $SCORE/100"
-          if [ "$VERDICT" = "FAIL" ]; then
-            echo "❌ Claude review verdict: FAIL — merge blocked."
+          cat > run-telemetry.json << EOF
+          {
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "repo": "${{ github.repository }}",
+            "branch": "${{ github.ref_name }}",
+            "actor": "${{ github.actor }}",
+            "commit": "${{ github.sha }}",
+            "tier": "${{ needs.detect-tier.outputs.tier }}",
+            "agents_run": ${{ needs.research.outputs.agents }},
+            "score": "${{ steps.gate.outputs.gate_score }}",
+            "result": "${{ steps.gate.outputs.gate_result }}",
+            "pr_url": "${{ steps.create_pr.outputs.pr_url }}",
+            "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          EOF
+          aws s3 cp run-telemetry.json \
+            s3://brighte-gate-telemetry/runs/${{ github.repository }}/${{ github.run_id }}.json \
+            --region ap-southeast-2 || echo "⚠️  Telemetry upload failed — non-blocking"
+
+      - name: Notify developer via Slack
+        if: always()
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          GITHUB_SLACK_MAP: ${{ vars.GITHUB_SLACK_MAP }}
+          RESULT: ${{ steps.gate.outputs.gate_result }}
+          SCORE: ${{ steps.gate.outputs.gate_score }}
+          ACTOR: ${{ github.actor }}
+          BRANCH: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+          TIER: ${{ needs.detect-tier.outputs.tier }}
+          PR_URL: ${{ steps.create_pr.outputs.pr_url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 << 'PYEOF'
+          import os, json
+          from slack_sdk import WebClient
+
+          client = WebClient(token=os.environ['SLACK_BOT_TOKEN'])
+
+          result  = os.environ.get('RESULT', 'FAIL')
+          score   = os.environ.get('SCORE', '0')
+          actor   = os.environ.get('ACTOR', 'unknown')
+          branch  = os.environ.get('BRANCH', '')
+          repo    = os.environ.get('REPO', '')
+          tier    = os.environ.get('TIER', '?')
+          run_url = os.environ.get('RUN_URL', '')
+          pr_url  = os.environ.get('PR_URL', '')
+
+          # Map GitHub username → Slack user ID
+          # Stored as org variable GITHUB_SLACK_MAP: {"chris.young": "UG8KHKX6U", ...}
+          user_map = json.loads(os.environ.get('GITHUB_SLACK_MAP', '{}'))
+          slack_user = user_map.get(actor, f"#team-tech-ops")
+
+          tier_emoji = {"1": "🟢", "2": "🟡", "3": "🔴"}.get(tier, "⚪")
+
+          if result == 'PASS':
+            msg = f"""✅ *Gate passed — PR raised automatically*
+
+          *Repo:* `{repo}`  *Branch:* `{branch}`
+          *Score:* {score}/100  {tier_emoji} *Tier {tier}*
+
+          PR is ready for human review. Copilot reviewer will run now.
+
+          <{pr_url}|View PR> · <{run_url}|View gate report>"""
+
+          elif result == 'CONDITIONAL':
+            msg = f"""⚠️ *Gate passed with MEDIUM findings*
+
+          *Repo:* `{repo}`  *Branch:* `{branch}`
+          *Score:* {score}/100  {tier_emoji} *Tier {tier}*
+
+          PR raised but MEDIUM findings need your attention before merge.
+          Review the findings and acknowledge or fix before merging.
+
+          <{pr_url}|View PR> · <{run_url}|View findings>"""
+
+          else:  # FAIL
+            msg = f"""🔴 *Gate failed — no PR created*
+
+          *Repo:* `{repo}`  *Branch:* `{branch}`
+          *Score:* {score}/100  {tier_emoji} *Tier {tier}*
+
+          Fix the blocking issues and push again. Gate re-runs automatically.
+
+          <{run_url}|View specific issues>"""
+
+          client.chat_postMessage(
+              channel=slack_user,
+              text=msg,
+              mrkdwn=True
+          )
+          print(f"Notified {slack_user}: {result} {score}/100")
+          PYEOF
+
+      - name: Enforce gate — fail workflow on FAIL verdict
+        run: |
+          RESULT="${{ steps.gate.outputs.gate_result }}"
+          SCORE="${{ steps.gate.outputs.gate_score }}"
+          echo "Final verdict: $RESULT | Score: $SCORE/100"
+          if [ "$RESULT" = "FAIL" ]; then
+            echo "❌ Gate FAILED — merge blocked. Fix blocking issues and push again."
             exit 1
           fi
           if [ -n "$SCORE" ] && [ "$SCORE" -lt 70 ]; then
             echo "❌ Score $SCORE/100 is below threshold (70) — merge blocked."
             exit 1
           fi
-          echo "✅ Quality gate passed (Verdict: $VERDICT, Score: $SCORE/100)"
+          echo "✅ Gate passed (${RESULT}, ${SCORE}/100)"
+
+  # ─────────────────────────────────────────────────────────────
+  # Docs-only fast path — skip all agents, auto-create PR
+  # ─────────────────────────────────────────────────────────────
+  docs-only-pr:
+    name: "Docs only — auto PR"
+    needs: detect-tier
+    if: needs.detect-tier.outputs.is_docs_only == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Create PR for docs-only change
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create \
+            --title "${{ github.event.head_commit.message }}" \
+            --body "🟢 **Docs-only change** — quality gate skipped (no code changes detected)." \
+            --base ${{ github.event.repository.default_branch }} \
+            --head ${{ github.ref_name }} || true
