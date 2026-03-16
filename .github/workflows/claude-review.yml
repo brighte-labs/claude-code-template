@@ -134,6 +134,7 @@ jobs:
       - name: Fetch agent templates (if not cached)
         if: steps.cache-agents.outputs.cache-hit != 'true'
         run: |
+          rm -rf /tmp/claude-template
           git clone --depth 1 https://github.com/brighte-labs/claude-code-template.git /tmp/claude-template
 
       - name: Install Claude Code CLI
@@ -282,6 +283,7 @@ jobs:
       - name: Fetch agent templates (if not cached)
         if: steps.cache-agents.outputs.cache-hit != 'true'
         run: |
+          rm -rf /tmp/claude-template
           git clone --depth 1 https://github.com/brighte-labs/claude-code-template.git /tmp/claude-template
 
       - name: Install Claude Code CLI
@@ -415,6 +417,7 @@ jobs:
       - name: Fetch agent templates (if not cached)
         if: steps.cache-agents.outputs.cache-hit != 'true'
         run: |
+          rm -rf /tmp/claude-template
           git clone --depth 1 https://github.com/brighte-labs/claude-code-template.git /tmp/claude-template
 
       - name: Install Claude Code CLI
