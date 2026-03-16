@@ -157,11 +157,11 @@ jobs:
         env:
           CLAUDE_CODE_USE_BEDROCK: "1"
           AWS_REGION: ap-southeast-2
-          ANTHROPIC_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-sonnet
-          ANTHROPIC_SMALL_FAST_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-haiku
-          ANTHROPIC_DEFAULT_SONNET_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-sonnet
-          ANTHROPIC_DEFAULT_HAIKU_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-haiku
-          ANTHROPIC_DEFAULT_OPUS_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-opus
+          ANTHROPIC_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:application-inference-profile/ge31a9iidhwa
+          ANTHROPIC_SMALL_FAST_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:application-inference-profile/ys8eznxdwug5
+          ANTHROPIC_DEFAULT_SONNET_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:application-inference-profile/ge31a9iidhwa
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:application-inference-profile/ys8eznxdwug5
+          ANTHROPIC_DEFAULT_OPUS_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:application-inference-profile/8jk1lhs5f6h7
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TIER: ${{ needs.detect-tier.outputs.tier }}
           CHANGED_FILES: ${{ needs.detect-tier.outputs.changed_files }}
@@ -324,11 +324,11 @@ jobs:
         env:
           CLAUDE_CODE_USE_BEDROCK: "1"
           AWS_REGION: ap-southeast-2
-          ANTHROPIC_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-sonnet
-          ANTHROPIC_SMALL_FAST_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-haiku
-          ANTHROPIC_DEFAULT_SONNET_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-sonnet
-          ANTHROPIC_DEFAULT_HAIKU_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-haiku
-          ANTHROPIC_DEFAULT_OPUS_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-opus
+          ANTHROPIC_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:application-inference-profile/ge31a9iidhwa
+          ANTHROPIC_SMALL_FAST_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:application-inference-profile/ys8eznxdwug5
+          ANTHROPIC_DEFAULT_SONNET_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:application-inference-profile/ge31a9iidhwa
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:application-inference-profile/ys8eznxdwug5
+          ANTHROPIC_DEFAULT_OPUS_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:application-inference-profile/8jk1lhs5f6h7
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TIER: ${{ needs.detect-tier.outputs.tier }}
           CHANGED_FILES: ${{ needs.detect-tier.outputs.changed_files }}
@@ -465,11 +465,11 @@ jobs:
         env:
           CLAUDE_CODE_USE_BEDROCK: "1"
           AWS_REGION: ap-southeast-2
-          ANTHROPIC_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-sonnet
-          ANTHROPIC_SMALL_FAST_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-haiku
-          ANTHROPIC_DEFAULT_SONNET_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-sonnet
-          ANTHROPIC_DEFAULT_HAIKU_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-haiku
-          ANTHROPIC_DEFAULT_OPUS_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:inference-profile/techops-pr-review-opus
+          ANTHROPIC_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:application-inference-profile/ge31a9iidhwa
+          ANTHROPIC_SMALL_FAST_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:application-inference-profile/ys8eznxdwug5
+          ANTHROPIC_DEFAULT_SONNET_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:application-inference-profile/ge31a9iidhwa
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:application-inference-profile/ys8eznxdwug5
+          ANTHROPIC_DEFAULT_OPUS_MODEL: arn:aws:bedrock:ap-southeast-2:040925256309:application-inference-profile/8jk1lhs5f6h7
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
