@@ -6,6 +6,9 @@ name: Brighte Claude Code Review
 # Assumes: arn:aws:iam::040925256309:role/github-bedrock
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
   push:
     branches:
       - 'feature/**'
