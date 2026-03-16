@@ -13,6 +13,10 @@ on:
       - 'BTB-**'
       - 'BUG-**'
       - 'copilot/**'       # catch Copilot Coding Agent branches
+    branches-ignore:
+      - main
+      - develop
+      - staging
 
 # Required for PR creation, comment posting, branch push-back
 permissions:
